@@ -2,7 +2,10 @@
 
 ## 0.0.2-dev - 2026-08-19
 
-- no changes
+### Dependencies
+
+- Bump github.com/hashicorp/terraform-plugin-framework from 1.14.1 to 1.19.0 (PR
+  #3 by @dependabot[bot])
 
 ## 0.0.1 - 2026-08-19
 
