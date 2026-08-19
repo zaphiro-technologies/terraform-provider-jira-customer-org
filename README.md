@@ -3,10 +3,10 @@
 This provider reconciles externally supplied users into a Jira Service
 Management customer organization.
 
-It deliberately contains only Jira logic. User discovery belongs to the
-calling Terraform module and can use AzureAD, Keycloak, or another provider.
-The provider receives a normalized list of `{ email, display_name }` values;
-it does not call Microsoft Graph or any other identity API.
+It deliberately contains only Jira logic. User discovery belongs to the calling
+Terraform module and can use AzureAD, Keycloak, or another provider. The
+provider receives a normalized list of `{ email, display_name }` values; it does
+not call Microsoft Graph or any other identity API.
 
 ## Supported behavior
 
@@ -18,22 +18,22 @@ For each reconciliation, the provider:
 4. Creates missing customers and adds them to the organization.
 5. Leaves existing organization members untouched.
 
-Membership is additive-only in version 1. No customers or organization
-members are removed.
+Membership is additive-only in version 1. No customers or organization members
+are removed.
 
-The resource is safe to run repeatedly. The input user list is write-only and
-is not stored in Terraform state.
+The resource is safe to run repeatedly. The input user list is write-only and is
+not stored in Terraform state.
 
 ## Provider configuration
 
-The provider has no Terraform configuration arguments. Jira credentials are
-read at runtime from:
+The provider has no Terraform configuration arguments. Jira credentials are read
+at runtime from:
 
-| Environment variable | Description |
-| --- | --- |
-| `JIRA_BASE_URL` | Jira Cloud site URL; the resource `base_url` must match it |
-| `JIRA_USER_EMAIL` | Jira account email used for API authentication |
-| `JIRA_API_TOKEN` | Jira API token |
+| Environment variable | Description                                                |
+| -------------------- | ---------------------------------------------------------- |
+| `JIRA_BASE_URL`      | Jira Cloud site URL; the resource `base_url` must match it |
+| `JIRA_USER_EMAIL`    | Jira account email used for API authentication             |
+| `JIRA_API_TOKEN`     | Jira API token                                             |
 
 `JIRA_USER_EMAIL_FILE` and `JIRA_API_TOKEN_FILE` can be used for
 Crossplane-injected secret files. Credentials and authorization headers are
@@ -71,20 +71,20 @@ resource "jira_customer_organization_sync" "this" {
 ```
 
 `sync_trigger` is an operator-controlled value. Change it when the upstream
-directory data changes and Terraform must execute the resource again. Do not
-use a timestamp or another value that changes on every refresh.
+directory data changes and Terraform must execute the resource again. Do not use
+a timestamp or another value that changes on every refresh.
 
 ## Crossplane
 
 The provider is downloaded by Terraform during `terraform init` and can be
-cached by `provider-terraform`. The Crossplane provider image therefore does
-not need a Go runtime or a helper binary. It needs network access to the
-Terraform Registry (or a configured provider mirror) and Jira, plus the Jira
-credential environment variables injected by Kubernetes.
+cached by `provider-terraform`. The Crossplane provider image therefore does not
+need a Go runtime or a helper binary. It needs network access to the Terraform
+Registry (or a configured provider mirror) and Jira, plus the Jira credential
+environment variables injected by Kubernetes.
 
 The source-specific wrapper module remains in the
-[tf-modules](https://github.com/zaphiro-technologies/tf-modules) repository.
-It converts identity-provider results into the input contract used here.
+[tf-modules](https://github.com/zaphiro-technologies/tf-modules) repository. It
+converts identity-provider results into the input contract used here.
 
 ## Development
 
@@ -94,15 +94,14 @@ go build -trimpath -ldflags='-s -w -X main.version=0.1.0' \
   -o terraform-provider-jira-customer-org .
 ```
 
-For local Terraform development, use a CLI development override and point it
-to the built binary. Remove that override before testing registry installation.
+For local Terraform development, use a CLI development override and point it to
+the built binary. Remove that override before testing registry installation.
 
 ## Release
 
 Releases are created by `.github/workflows/release.yml` when a semantic-version
-tag such as `v0.1.0` is pushed. GoReleaser creates platform archives,
-SHA-256 checksums, the Terraform Registry manifest, and a detached GPG
-signature.
+tag such as `v0.1.0` is pushed. GoReleaser creates platform archives, SHA-256
+checksums, the Terraform Registry manifest, and a detached GPG signature.
 
 Before the first release:
 
