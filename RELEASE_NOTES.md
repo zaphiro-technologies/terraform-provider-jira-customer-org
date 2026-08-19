@@ -1,10 +1,6 @@
 # terraform-provider-jira-customer-org Release Notes
 
-## 0.0.2-dev - 2026-08-19
-
-- no changes
-
-## 0.0.1 - 2026-08-19
+## 0.0.1-dev - 2026-08-19
 
 ### Dependencies
 
