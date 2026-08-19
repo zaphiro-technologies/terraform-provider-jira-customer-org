@@ -55,7 +55,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (Result, error) {
 	}
 	logSummary(logger, result)
 	if err != nil {
-		return result, fmt.Errorf("Jira reconciliation failed: %w", err)
+		return result, fmt.Errorf("jira reconciliation failed: %w", err)
 	}
 	return result, nil
 }

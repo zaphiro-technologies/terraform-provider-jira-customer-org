@@ -55,11 +55,14 @@ type HTTPClient struct {
 func NewClient(cfg Config) (*HTTPClient, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if baseURL == "" || strings.TrimSpace(cfg.UserEmail) == "" || strings.TrimSpace(cfg.APIToken) == "" {
-		return nil, fmt.Errorf("Jira base URL, user email, and API token are required")
+		return nil, fmt.Errorf("jira base URL, user email, and API token are required")
 	}
 	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !(cfg.allowInsecureForTest && parsed.Scheme == "http")) {
-		return nil, fmt.Errorf("Jira base URL must be an HTTPS URL")
+	validScheme := parsed.Scheme == "https" ||
+		(cfg.allowInsecureForTest && parsed.Scheme == "http")
+
+	if err != nil || parsed.Host == "" || !validScheme {
+		return nil, fmt.Errorf("jira base URL must be an HTTPS URL")
 	}
 	return &HTTPClient{
 		baseURL: baseURL, userEmail: cfg.UserEmail, apiToken: cfg.APIToken,
@@ -106,9 +109,9 @@ func (c *HTTPClient) EnsureOrganization(ctx context.Context, name string) (Organ
 		return Organization{}, false, err
 	}
 	if response.ID == "" {
-		return Organization{}, false, fmt.Errorf("Jira organization create response did not contain an ID")
+		return Organization{}, false, fmt.Errorf("jira organization create response did not contain an ID")
 	}
-	return Organization{ID: response.ID, Name: response.Name}, false, nil
+	return Organization(response), false, nil
 }
 
 func (c *HTTPClient) LinkOrganization(ctx context.Context, serviceDeskID, organizationID string) error {
@@ -189,7 +192,7 @@ func (c *HTTPClient) EnsureCustomer(ctx context.Context, serviceDeskID string, u
 		return Customer{}, false, err
 	}
 	if response.AccountID == "" {
-		return Customer{}, false, fmt.Errorf("Jira customer create response did not contain an account ID")
+		return Customer{}, false, fmt.Errorf("jira customer create response did not contain an account ID")
 	}
 	response.Email = user.Email
 	return response, false, nil
@@ -249,7 +252,7 @@ func (c *HTTPClient) findOrganization(ctx context.Context, name string) (Organiz
 		}
 		for _, candidate := range page.Values {
 			if candidate.Name == name {
-				return Organization{ID: candidate.ID, Name: candidate.Name}, true, nil
+				return Organization(candidate), true, nil
 			}
 		}
 		nextURL = page.Links.Next
