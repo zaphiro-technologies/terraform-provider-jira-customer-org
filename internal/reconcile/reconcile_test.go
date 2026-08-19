@@ -11,14 +11,22 @@ import (
 	"github.com/zaphiro-technologies/terraform-provider-jira-customer-org/internal/model"
 )
 
+type membershipRemoval struct {
+	organizationID string
+	accountID      string
+}
+
 type fakeClient struct {
 	organization       jira.Organization
 	organizationExists bool
 	organizationUsers  []jira.Customer
+	userOrganizations  map[string][]jira.Organization
 	customerExists     bool
 	customer           jira.Customer
 	ensureCalls        int
 	added              []string
+	removed            []membershipRemoval
+	removedCustomers   []string
 	addError           error
 }
 
@@ -30,6 +38,10 @@ func (f *fakeClient) LinkOrganization(context.Context, string, string) error { r
 
 func (f *fakeClient) ListOrganizationUsers(context.Context, string) ([]jira.Customer, error) {
 	return f.organizationUsers, nil
+}
+
+func (f *fakeClient) ListUserOrganizations(_ context.Context, accountID string) ([]jira.Organization, error) {
+	return f.userOrganizations[accountID], nil
 }
 
 func (f *fakeClient) EnsureCustomer(context.Context, string, model.CustomerUser) (jira.Customer, bool, error) {
@@ -45,9 +57,23 @@ func (f *fakeClient) AddUserToOrganization(_ context.Context, _, accountID strin
 	return nil
 }
 
+func (f *fakeClient) RemoveUserFromOrganization(_ context.Context, organizationID, accountID string) error {
+	f.removed = append(f.removed, membershipRemoval{organizationID: organizationID, accountID: accountID})
+	return nil
+}
+
+func (f *fakeClient) RemoveCustomerFromServiceDesk(_ context.Context, _, accountID string) error {
+	f.removedCustomers = append(f.removedCustomers, accountID)
+	return nil
+}
+
 func testReconciler(client *fakeClient) *Reconciler {
+	return testReconcilerWithMode(client, MembershipModeAdditive)
+}
+
+func testReconcilerWithMode(client *fakeClient, membershipMode string) *Reconciler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(client, logger, Options{OrganizationName: "Acme", ServiceDeskID: "SUP", MembershipMode: "additive"})
+	return New(client, logger, Options{OrganizationName: "Acme", ServiceDeskID: "SUP", MembershipMode: membershipMode})
 }
 
 func TestSyncCreatesOrganizationCustomerAndMembership(t *testing.T) {
@@ -112,6 +138,37 @@ func TestSyncAddsCustomerThatBelongsToAnotherOrganization(t *testing.T) {
 	}
 	if summary.CustomersExisting != 1 || summary.MembershipsAdded != 1 || len(client.added) != 1 {
 		t.Fatalf("unexpected summary/client: %#v %#v", summary, client)
+	}
+}
+
+func TestSyncAuthoritativeRemovesStaleMembersAndOrphanCustomers(t *testing.T) {
+	client := &fakeClient{
+		organization:       jira.Organization{ID: "1", Name: "Acme"},
+		organizationExists: true,
+		organizationUsers: []jira.Customer{
+			{AccountID: "account-keep", Email: "keep@example.com"},
+			{AccountID: "account-stale", Email: "stale@example.com"},
+			{AccountID: "account-shared", Email: "shared@example.com"},
+		},
+		userOrganizations: map[string][]jira.Organization{
+			"account-stale":  {{ID: "1", Name: "Acme"}},
+			"account-shared": {{ID: "other-org", Name: "Other"}},
+		},
+		customerExists: true,
+		customer:       jira.Customer{AccountID: "account-keep"},
+	}
+	summary, err := testReconcilerWithMode(client, MembershipModeAuthoritative).Sync(context.Background(), []model.CustomerUser{{Email: "keep@example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.CustomersExisting != 1 || summary.MembershipsAdded != 0 || summary.MembershipsRemoved != 2 || summary.CustomersRemoved != 1 {
+		t.Fatalf("unexpected summary: %#v", summary)
+	}
+	if len(client.removed) != 2 || client.removed[0].accountID != "account-stale" || client.removed[1].accountID != "account-shared" {
+		t.Fatalf("removed memberships = %#v", client.removed)
+	}
+	if len(client.removedCustomers) != 1 || client.removedCustomers[0] != "account-stale" {
+		t.Fatalf("removed customers = %#v", client.removedCustomers)
 	}
 }
 

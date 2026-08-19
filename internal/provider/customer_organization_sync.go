@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/zaphiro-technologies/terraform-provider-jira-customer-org/internal/model"
+	"github.com/zaphiro-technologies/terraform-provider-jira-customer-org/internal/reconcile"
 	"github.com/zaphiro-technologies/terraform-provider-jira-customer-org/internal/syncer"
 )
 
@@ -50,7 +51,7 @@ func (r *CustomerOrganizationSyncResource) Metadata(_ context.Context, _ resourc
 
 func (r *CustomerOrganizationSyncResource) Schema(_ context.Context, _ resource.SchemaRequest, response *resource.SchemaResponse) {
 	response.Schema = schema.Schema{
-		Description: "Synchronizes externally supplied users into a Jira Service Management customer organization using additive-only semantics.",
+		Description: "Synchronizes externally supplied users into a Jira Service Management customer organization.",
 		Attributes: map[string]schema.Attribute{
 			"organization_name": schema.StringAttribute{
 				Required:    true,
@@ -85,7 +86,7 @@ func (r *CustomerOrganizationSyncResource) Schema(_ context.Context, _ resource.
 			},
 			"membership_mode": schema.StringAttribute{
 				Required:    true,
-				Description: "Membership behavior. Only additive is supported in v1.",
+				Description: "Membership behavior. additive preserves existing members; authoritative removes members not present in users_wo and cleans up orphaned customers.",
 			},
 			"sync_trigger": schema.StringAttribute{
 				Required:    true,
@@ -154,8 +155,8 @@ func (r *CustomerOrganizationSyncResource) Update(ctx context.Context, request r
 }
 
 func (r *CustomerOrganizationSyncResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {
-	// Additive synchronization has no destructive delete behavior. Terraform
-	// removes the resource from state after this method returns.
+	// Terraform removes this execution resource from state; Jira membership is
+	// changed only by a reconciliation run.
 }
 
 func (r *CustomerOrganizationSyncResource) runner() func(context.Context, syncer.Config) (syncer.Result, error) {
@@ -214,12 +215,16 @@ func (syncConfigValidator) ValidateResource(ctx context.Context, request resourc
 	if data.BaseURL.IsNull() || (!data.BaseURL.IsUnknown() && !validBaseURL(data.BaseURL.ValueString())) {
 		response.Diagnostics.AddAttributeError(path.Root("base_url"), "Invalid Jira base URL", "base_url must be an HTTPS site URL without a path.")
 	}
-	if data.MembershipMode.IsNull() || (!data.MembershipMode.IsUnknown() && data.MembershipMode.ValueString() != "additive") {
-		response.Diagnostics.AddAttributeError(path.Root("membership_mode"), "Unsupported membership mode", "Only membership_mode=additive is supported in v1.")
+	if !validMembershipMode(data.MembershipMode) {
+		response.Diagnostics.AddAttributeError(path.Root("membership_mode"), "Unsupported membership mode", "membership_mode must be additive or authoritative.")
 	}
 	if data.SyncTrigger.IsNull() || (!data.SyncTrigger.IsUnknown() && strings.TrimSpace(data.SyncTrigger.ValueString()) == "") {
 		response.Diagnostics.AddAttributeError(path.Root("sync_trigger"), "Invalid sync trigger", "sync_trigger must not be empty.")
 	}
+}
+
+func validMembershipMode(value types.String) bool {
+	return !value.IsNull() && (value.IsUnknown() || value.ValueString() == reconcile.MembershipModeAdditive || value.ValueString() == reconcile.MembershipModeAuthoritative)
 }
 
 func validBaseURL(raw string) bool {

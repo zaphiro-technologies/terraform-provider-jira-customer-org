@@ -92,6 +92,7 @@ func logSummary(logger *slog.Logger, result Result) {
 		"customers_existing", summary.CustomersExisting,
 		"customers_created", summary.CustomersCreated,
 		"memberships_added", summary.MembershipsAdded,
-		"memberships_removed", 0,
+		"memberships_removed", summary.MembershipsRemoved,
+		"customers_removed", summary.CustomersRemoved,
 	)
 }

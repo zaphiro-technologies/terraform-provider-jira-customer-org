@@ -9,9 +9,10 @@ description: |-
 # jira_customer_organization_sync (Resource)
 
 Ensures that a Jira Service Management organization exists and that the supplied
-customers belong to it. Reconciliation is additive-only. Existing customers and
-organization members are reused; customers are never deleted and organization
-members are never removed.
+customers belong to it. With `additive` membership, existing customers and
+organization members are reused. With `authoritative` membership, members not
+in `users_wo` are removed, and customers with no remaining organization are
+removed from the service desk.
 
 The `users_wo` argument is write-only and is not persisted in Terraform state.
 
@@ -44,6 +45,8 @@ resource "jira_customer_organization_sync" "this" {
 - `base_url` (String, Required) - HTTPS Jira Cloud site URL without a path.
 - `users_wo` (List of Objects, Required, Write-Only) - Desired users. Each
   object has required `email` and optional `display_name`.
-- `membership_mode` (String, Required) - Must be `additive` in version 1.
+- `membership_mode` (String, Required) - `additive` preserves existing
+  organization members. `authoritative` removes members not in `users_wo` and
+  removes customers that no longer belong to any organization.
 - `sync_trigger` (String, Required) - Stable operator-controlled value used to
   request a new reconciliation.
