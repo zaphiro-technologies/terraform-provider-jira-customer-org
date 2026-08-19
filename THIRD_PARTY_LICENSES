@@ -1,0 +1,29 @@
+Third-Party Software
+====================
+
+This software includes third-party components distributed under
+their respective licenses.
+
+Mozilla Public License 2.0
+--------------------------
+
+The following components are licensed under the Mozilla Public
+License, Version 2.0:
+
+- github.com/hashicorp/terraform-plugin-framework
+- github.com/hashicorp/go-plugin
+- github.com/hashicorp/go-uuid
+- github.com/hashicorp/terraform-plugin-go
+- github.com/hashicorp/terraform-plugin-log
+- github.com/hashicorp/terraform-registry-address
+- github.com/hashicorp/terraform-svchost
+- github.com/hashicorp/yamux
+
+License:
+Mozilla Public License Version 2.0
+
+Source code for these components is available from their respective
+upstream repositories.
+
+The full text of the Mozilla Public License Version 2.0 is available at:
+https://www.mozilla.org/MPL/2.0/
