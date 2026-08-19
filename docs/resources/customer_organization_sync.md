@@ -10,10 +10,10 @@ description: |-
 
 Ensures that a Jira Service Management organization exists and that the supplied
 customers belong to it. With `additive` membership, existing customers and
-organization members are reused. With `authoritative` membership, members not
-in `users_wo` are removed. After membership reconciliation, all service-desk
-customers are checked and those with no remaining organization are removed
-from the service desk.
+organization members are reused. With `authoritative` membership, members not in
+`users_wo` are removed. After membership reconciliation, all service-desk
+customers are checked and those with no remaining organization are removed from
+the service desk.
 
 The `users_wo` argument is write-only and is not persisted in Terraform state.
 
