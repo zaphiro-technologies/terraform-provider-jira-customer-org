@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/zaphiro-technologies/terraform-provider-jira-customer-org/internal/jira"
@@ -17,17 +18,19 @@ type membershipRemoval struct {
 }
 
 type fakeClient struct {
-	organization       jira.Organization
-	organizationExists bool
-	organizationUsers  []jira.Customer
-	userOrganizations  map[string][]jira.Organization
-	customerExists     bool
-	customer           jira.Customer
-	ensureCalls        int
-	added              []string
-	removed            []membershipRemoval
-	removedCustomers   []string
-	addError           error
+	organization         jira.Organization
+	organizationExists   bool
+	organizationUsers    []jira.Customer
+	serviceDeskCustomers []jira.Customer
+	userOrganizations    map[string][]jira.Organization
+	customerExists       bool
+	customer             jira.Customer
+	ensureCalls          int
+	added                []string
+	removed              []membershipRemoval
+	removedCustomers     []string
+	removeCustomerError  error
+	addError             error
 }
 
 func (f *fakeClient) EnsureOrganization(context.Context, string) (jira.Organization, bool, error) {
@@ -38,6 +41,10 @@ func (f *fakeClient) LinkOrganization(context.Context, string, string) error { r
 
 func (f *fakeClient) ListOrganizationUsers(context.Context, string) ([]jira.Customer, error) {
 	return f.organizationUsers, nil
+}
+
+func (f *fakeClient) ListServiceDeskCustomers(context.Context, string) ([]jira.Customer, error) {
+	return f.serviceDeskCustomers, nil
 }
 
 func (f *fakeClient) ListUserOrganizations(_ context.Context, accountID string) ([]jira.Organization, error) {
@@ -64,7 +71,7 @@ func (f *fakeClient) RemoveUserFromOrganization(_ context.Context, organizationI
 
 func (f *fakeClient) RemoveCustomerFromServiceDesk(_ context.Context, _, accountID string) error {
 	f.removedCustomers = append(f.removedCustomers, accountID)
-	return nil
+	return f.removeCustomerError
 }
 
 func testReconciler(client *fakeClient) *Reconciler {
@@ -150,6 +157,11 @@ func TestSyncAuthoritativeRemovesStaleMembersAndOrphanCustomers(t *testing.T) {
 			{AccountID: "account-stale", Email: "stale@example.com"},
 			{AccountID: "account-shared", Email: "shared@example.com"},
 		},
+		serviceDeskCustomers: []jira.Customer{
+			{AccountID: "account-keep", Email: "keep@example.com"},
+			{AccountID: "account-stale", Email: "stale@example.com"},
+			{AccountID: "account-shared", Email: "shared@example.com"},
+		},
 		userOrganizations: map[string][]jira.Organization{
 			"account-stale":  {{ID: "1", Name: "Acme"}},
 			"account-shared": {{ID: "other-org", Name: "Other"}},
@@ -169,6 +181,62 @@ func TestSyncAuthoritativeRemovesStaleMembersAndOrphanCustomers(t *testing.T) {
 	}
 	if len(client.removedCustomers) != 1 || client.removedCustomers[0] != "account-stale" {
 		t.Fatalf("removed customers = %#v", client.removedCustomers)
+	}
+}
+
+func TestSyncAuthoritativeRemovesPreExistingOrphanCustomers(t *testing.T) {
+	client := &fakeClient{
+		organization:       jira.Organization{ID: "1", Name: "Acme"},
+		organizationExists: true,
+		organizationUsers:  []jira.Customer{{AccountID: "account-keep", Email: "keep@example.com"}},
+		serviceDeskCustomers: []jira.Customer{
+			{AccountID: "account-keep", Email: "keep@example.com"},
+			{AccountID: "account-orphan", Email: "orphan@example.com"},
+		},
+		userOrganizations: map[string][]jira.Organization{
+			"account-orphan": {},
+		},
+		customerExists: true,
+		customer:       jira.Customer{AccountID: "account-keep"},
+	}
+
+	summary, err := testReconcilerWithMode(client, MembershipModeAuthoritative).Sync(context.Background(), []model.CustomerUser{{Email: "keep@example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.MembershipsRemoved != 0 || summary.CustomersRemoved != 1 {
+		t.Fatalf("unexpected summary: %#v", summary)
+	}
+	if len(client.removedCustomers) != 1 || client.removedCustomers[0] != "account-orphan" {
+		t.Fatalf("removed customers = %#v", client.removedCustomers)
+	}
+}
+
+func TestSyncAuthoritativeStopsAfterOpenAccessDeletionFailure(t *testing.T) {
+	client := &fakeClient{
+		organization:       jira.Organization{ID: "1", Name: "Acme"},
+		organizationExists: true,
+		organizationUsers:  []jira.Customer{{AccountID: "account-keep", Email: "keep@example.com"}},
+		serviceDeskCustomers: []jira.Customer{
+			{AccountID: "account-keep", Email: "keep@example.com"},
+			{AccountID: "account-orphan-1", Email: "orphan-1@example.com"},
+			{AccountID: "account-orphan-2", Email: "orphan-2@example.com"},
+			{AccountID: "account-orphan-3", Email: "orphan-3@example.com"},
+		},
+		customerExists:      true,
+		customer:            jira.Customer{AccountID: "account-keep"},
+		removeCustomerError: jira.ErrServiceDeskOpenAccessEnabled,
+	}
+
+	_, err := testReconcilerWithMode(client, MembershipModeAuthoritative).Sync(context.Background(), []model.CustomerUser{{Email: "keep@example.com"}})
+	if err == nil {
+		t.Fatal("expected open-access prerequisite failure")
+	}
+	if len(client.removedCustomers) != 1 {
+		t.Fatalf("removed customers = %#v, want exactly one attempted deletion", client.removedCustomers)
+	}
+	if strings.Count(err.Error(), serviceDeskOpenAccessFailure) != 1 {
+		t.Fatalf("error = %v, want one deterministic prerequisite failure", err)
 	}
 }
 

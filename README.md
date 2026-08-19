@@ -18,8 +18,9 @@ For each reconciliation, the provider:
 4. Creates missing customers and adds them to the organization.
 5. In `authoritative` mode, removes organization members that are not in the
   supplied user list.
-6. In `authoritative` mode, removes a customer from the service desk when they
-  no longer belong to any organization.
+6. In `authoritative` mode, scans all service-desk customers after membership
+  reconciliation and removes customers that no longer belong to any
+  organization.
 
 In `additive` mode, existing organization members are left untouched. The
 `membership_mode` argument controls which behavior is used.
@@ -27,6 +28,9 @@ In `additive` mode, existing organization members are left untouched. The
 `authoritative` mode is destructive: use it only when this resource owns the
 organization membership. A customer that still belongs to another Jira
 organization is retained.
+
+Jira service-desk open access must be disabled for authoritative orphan
+customer cleanup. Jira rejects customer deletion while open access is enabled.
 
 The resource is safe to run repeatedly. The input user list is write-only and is
 not stored in Terraform state.
@@ -111,7 +115,7 @@ the built binary. Remove that override before testing registry installation.
 ## Release
 
 Releases are created by `.github/workflows/release.yml` when a semantic-version
-tag such as `v0.0.1` is pushed. GoReleaser creates platform archives, SHA-256
+tag such as `v0.0.2` is pushed. GoReleaser creates platform archives, SHA-256
 checksums, the Terraform Registry manifest, and a detached GPG signature.
 
 Before the first release:
@@ -120,6 +124,6 @@ Before the first release:
 2. Add its armored public key to the Terraform Registry provider publishing
    settings.
 3. Add `GPG_PRIVATE_KEY` and `PASSPHRASE` as GitHub Actions secrets.
-4. Commit the provider and push a tag such as `v0.0.1`.
+4. Commit the provider and push a tag such as `v0.0.2`.
 5. Enable the provider in the Terraform Registry after the GitHub release is
    finalized.

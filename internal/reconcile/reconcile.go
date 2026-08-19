@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -18,8 +19,9 @@ type Options struct {
 }
 
 const (
-	MembershipModeAdditive      = "additive"
-	MembershipModeAuthoritative = "authoritative"
+	MembershipModeAdditive       = "additive"
+	MembershipModeAuthoritative  = "authoritative"
+	serviceDeskOpenAccessFailure = "remove orphan customers: Jira service desk open access must be disabled before orphan customers can be removed"
 )
 
 type Summary struct {
@@ -89,10 +91,14 @@ func (r *Reconciler) Sync(ctx context.Context, users []model.CustomerUser) (Summ
 	summary.MembershipsAdded += userSummary.membershipsAdded
 
 	if authoritative && len(failures) == 0 {
-		membershipsRemoved, customersRemoved, removalFailures := r.removeStaleMembers(ctx, organization.ID, r.options.ServiceDeskID, members, state.desiredEmails, state.desiredAccountIDs)
+		membershipsRemoved, removedAccountIDs, removalFailures := r.removeStaleMembers(ctx, organization.ID, members, state.desiredEmails, state.desiredAccountIDs)
 		summary.MembershipsRemoved += membershipsRemoved
-		summary.CustomersRemoved += customersRemoved
 		failures = append(failures, removalFailures...)
+		if len(failures) == 0 {
+			customersRemoved, orphanFailures := r.removeOrphanCustomers(ctx, organization.ID, r.options.ServiceDeskID, removedAccountIDs, state.desiredEmails, state.desiredAccountIDs)
+			summary.CustomersRemoved += customersRemoved
+			failures = append(failures, orphanFailures...)
+		}
 	}
 
 	if len(failures) > 0 {
@@ -181,9 +187,9 @@ func (r *Reconciler) reconcileUser(ctx context.Context, organizationID string, u
 	return summary, nil
 }
 
-func (r *Reconciler) removeStaleMembers(ctx context.Context, organizationID, serviceDeskID string, members []jira.Customer, desiredEmails, desiredAccountIDs map[string]struct{}) (int, int, []string) {
+func (r *Reconciler) removeStaleMembers(ctx context.Context, organizationID string, members []jira.Customer, desiredEmails, desiredAccountIDs map[string]struct{}) (int, map[string]struct{}, []string) {
 	membershipsRemoved := 0
-	customersRemoved := 0
+	removedAccountIDs := make(map[string]struct{})
 	var failures []string
 	for _, member := range members {
 		if desiredMember(member, desiredEmails, desiredAccountIDs) {
@@ -198,28 +204,78 @@ func (r *Reconciler) removeStaleMembers(ctx context.Context, organizationID, ser
 			continue
 		}
 		membershipsRemoved++
+		removedAccountIDs[member.AccountID] = struct{}{}
 		r.logger.Debug("customer removed from organization", "account_id", member.AccountID)
+	}
+	return membershipsRemoved, removedAccountIDs, failures
+}
 
-		organizations, err := r.client.ListUserOrganizations(ctx, member.AccountID)
+func (r *Reconciler) removeOrphanCustomers(ctx context.Context, organizationID, serviceDeskID string, removedAccountIDs, desiredEmails, desiredAccountIDs map[string]struct{}) (int, []string) {
+	customers, err := r.client.ListServiceDeskCustomers(ctx, serviceDeskID)
+	if err != nil {
+		return 0, []string{fmt.Sprintf("list service desk customers: %v", err)}
+	}
+
+	customersRemoved := 0
+	var failures []string
+	for _, customer := range customers {
+		if desiredMember(customer, desiredEmails, desiredAccountIDs) {
+			continue
+		}
+		if customer.AccountID == "" {
+			failures = append(failures, fmt.Sprintf("remove customer from service desk: customer %q has no account ID", customer.Email))
+			continue
+		}
+
+		orphan, err := r.isOrphanCustomer(ctx, organizationID, customer, removedAccountIDs)
 		if err != nil {
-			failures = append(failures, fmt.Sprintf("list customer organizations: %v", err))
+			failures = append(failures, err.Error())
 			continue
 		}
-		if hasOtherOrganization(organizations, organizationID) {
+		if !orphan {
 			continue
 		}
-		if err := r.client.RemoveCustomerFromServiceDesk(ctx, serviceDeskID, member.AccountID); err != nil {
+		if err := r.client.RemoveCustomerFromServiceDesk(ctx, serviceDeskID, customer.AccountID); err != nil {
+			if errors.Is(err, jira.ErrServiceDeskOpenAccessEnabled) {
+				failures = append(failures, serviceDeskOpenAccessFailure)
+				return customersRemoved, failures
+			}
 			failures = append(failures, fmt.Sprintf("remove customer from service desk: %v", err))
 			continue
 		}
 		customersRemoved++
+		r.logger.Debug("orphan customer removed from service desk", "account_id", customer.AccountID)
 	}
-	return membershipsRemoved, customersRemoved, failures
+	return customersRemoved, failures
+}
+
+func (r *Reconciler) isOrphanCustomer(ctx context.Context, organizationID string, customer jira.Customer, removedAccountIDs map[string]struct{}) (bool, error) {
+	organizations, err := r.client.ListUserOrganizations(ctx, customer.AccountID)
+	if err != nil {
+		return false, fmt.Errorf("list customer organizations: %v", err)
+	}
+	if hasOtherOrganization(organizations, organizationID) {
+		return false, nil
+	}
+	if hasOrganization(organizations, organizationID) {
+		_, removed := removedAccountIDs[customer.AccountID]
+		return removed, nil
+	}
+	return true, nil
 }
 
 func hasOtherOrganization(organizations []jira.Organization, organizationID string) bool {
 	for _, organization := range organizations {
 		if organization.ID != organizationID {
+			return true
+		}
+	}
+	return false
+}
+
+func hasOrganization(organizations []jira.Organization, organizationID string) bool {
+	for _, organization := range organizations {
+		if organization.ID == organizationID {
 			return true
 		}
 	}

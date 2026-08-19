@@ -11,8 +11,9 @@ description: |-
 Ensures that a Jira Service Management organization exists and that the supplied
 customers belong to it. With `additive` membership, existing customers and
 organization members are reused. With `authoritative` membership, members not
-in `users_wo` are removed, and customers with no remaining organization are
-removed from the service desk.
+in `users_wo` are removed. After membership reconciliation, all service-desk
+customers are checked and those with no remaining organization are removed
+from the service desk.
 
 The `users_wo` argument is write-only and is not persisted in Terraform state.
 
@@ -50,3 +51,7 @@ resource "jira_customer_organization_sync" "this" {
   removes customers that no longer belong to any organization.
 - `sync_trigger` (String, Required) - Stable operator-controlled value used to
   request a new reconciliation.
+
+In `authoritative` mode, Jira service-desk open access must be disabled before
+orphan customers can be removed. Jira rejects customer deletion while open
+access is enabled.
