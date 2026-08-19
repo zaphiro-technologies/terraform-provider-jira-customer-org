@@ -16,13 +16,29 @@ For each reconciliation, the provider:
 2. Ensures that organization is linked to the configured service desk.
 3. Reuses existing Jira customers and Jira accounts where possible.
 4. Creates missing customers and adds them to the organization.
-5. Leaves existing organization members untouched.
+5. In `authoritative` mode, removes organization members that are not in the
+   supplied user list.
+6. In `authoritative` mode, scans all service-desk customers after membership
+   reconciliation and removes customers that no longer belong to any
+   organization.
 
-Membership is additive-only in version 1. No customers or organization members
-are removed.
+In `additive` mode, existing organization members are left untouched. The
+`membership_mode` argument controls which behavior is used.
+
+`authoritative` mode is destructive: use it only when this resource owns the
+organization membership. A customer that still belongs to another Jira
+organization is retained.
+
+Jira service-desk open access must be disabled for authoritative orphan customer
+cleanup. Jira rejects customer deletion while open access is enabled.
 
 The resource is safe to run repeatedly. The input user list is write-only and is
 not stored in Terraform state.
+
+When the resource is destroyed, it removes the organization's users from the
+service desk when they do not belong to another organization, removes the
+organization memberships, and deletes the Jira organization. Destruction is
+destructive and requires Jira service-desk open access to be disabled.
 
 ## Provider configuration
 
@@ -48,7 +64,7 @@ terraform {
   required_providers {
     jira = {
       source  = "zaphiro-technologies/jira-customer-org"
-      version = "~> 0.1"
+      version = "~> 0.0.1"
     }
   }
 }
@@ -74,6 +90,10 @@ resource "jira_customer_organization_sync" "this" {
 directory data changes and Terraform must execute the resource again. Do not use
 a timestamp or another value that changes on every refresh.
 
+Set `membership_mode = "additive"` to preserve existing organization members, or
+`membership_mode = "authoritative"` to make the organization match `users_wo`
+and clean up orphaned customers.
+
 ## Crossplane
 
 The provider is downloaded by Terraform during `terraform init` and can be
@@ -90,7 +110,7 @@ converts identity-provider results into the input contract used here.
 
 ```shell
 go test ./...
-go build -trimpath -ldflags='-s -w -X main.version=0.1.0' \
+go build -trimpath -ldflags='-s -w -X main.version=0.0.1' \
   -o terraform-provider-jira-customer-org .
 ```
 
@@ -100,7 +120,7 @@ the built binary. Remove that override before testing registry installation.
 ## Release
 
 Releases are created by `.github/workflows/release.yml` when a semantic-version
-tag such as `v0.1.0` is pushed. GoReleaser creates platform archives, SHA-256
+tag such as `v0.0.2` is pushed. GoReleaser creates platform archives, SHA-256
 checksums, the Terraform Registry manifest, and a detached GPG signature.
 
 Before the first release:
@@ -109,6 +129,6 @@ Before the first release:
 2. Add its armored public key to the Terraform Registry provider publishing
    settings.
 3. Add `GPG_PRIVATE_KEY` and `PASSPHRASE` as GitHub Actions secrets.
-4. Commit the provider and push a tag such as `v0.1.0`.
+4. Commit the provider and push a tag such as `v0.0.2`.
 5. Enable the provider in the Terraform Registry after the GitHub release is
    finalized.

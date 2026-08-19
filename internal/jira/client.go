@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,12 +19,29 @@ import (
 	"github.com/zaphiro-technologies/terraform-provider-jira-customer-org/internal/model"
 )
 
+const (
+	organizationAPIPath  = "/rest/servicedeskapi/organization"
+	serviceDeskAPIPath   = "/rest/servicedeskapi/servicedesk"
+	initialPageQuery     = "?start=0&limit=50"
+	pageStartQuery       = "?start="
+	pageLimitQuery       = "&limit="
+	openAccessI18nPrefix = "sd.jsm.error.servicedesk.customer.remove.servicedesk.open.access."
+)
+
+var ErrServiceDeskOpenAccessEnabled = errors.New("service desk has open access enabled")
+
 type Client interface {
+	FindOrganization(ctx context.Context, name string) (Organization, bool, error)
 	EnsureOrganization(ctx context.Context, name string) (Organization, bool, error)
+	DeleteOrganization(ctx context.Context, organizationID string) error
 	LinkOrganization(ctx context.Context, serviceDeskID, organizationID string) error
 	ListOrganizationUsers(ctx context.Context, organizationID string) ([]Customer, error)
+	ListServiceDeskCustomers(ctx context.Context, serviceDeskID string) ([]Customer, error)
+	ListUserOrganizations(ctx context.Context, accountID string) ([]Organization, error)
 	EnsureCustomer(ctx context.Context, serviceDeskID string, user model.CustomerUser) (Customer, bool, error)
 	AddUserToOrganization(ctx context.Context, organizationID, accountID string) error
+	RemoveUserFromOrganization(ctx context.Context, organizationID, accountID string) error
+	RemoveCustomerFromServiceDesk(ctx context.Context, serviceDeskID, accountID string) error
 }
 
 type Organization struct {
@@ -89,7 +107,7 @@ func NewClientFromEnvWithBaseURL(httpClient *http.Client, baseURL string) (*HTTP
 }
 
 func (c *HTTPClient) EnsureOrganization(ctx context.Context, name string) (Organization, bool, error) {
-	organization, found, err := c.findOrganization(ctx, name)
+	organization, found, err := c.FindOrganization(ctx, name)
 	if err != nil {
 		return Organization{}, false, err
 	}
@@ -98,10 +116,10 @@ func (c *HTTPClient) EnsureOrganization(ctx context.Context, name string) (Organ
 	}
 
 	var response organizationDTO
-	err = c.request(ctx, http.MethodPost, "/rest/servicedeskapi/organization", map[string]string{"name": name}, &response, http.StatusCreated)
+	err = c.request(ctx, http.MethodPost, organizationAPIPath, map[string]string{"name": name}, &response, http.StatusCreated)
 	if err != nil {
 		if apiErr, ok := err.(*APIError); ok && apiErr.StatusCode == http.StatusConflict {
-			organization, found, findErr := c.findOrganization(ctx, name)
+			organization, found, findErr := c.FindOrganization(ctx, name)
 			if findErr == nil && found {
 				return organization, true, nil
 			}
@@ -114,16 +132,25 @@ func (c *HTTPClient) EnsureOrganization(ctx context.Context, name string) (Organ
 	return Organization(response), false, nil
 }
 
+func (c *HTTPClient) FindOrganization(ctx context.Context, name string) (Organization, bool, error) {
+	return c.findOrganization(ctx, name)
+}
+
+func (c *HTTPClient) DeleteOrganization(ctx context.Context, organizationID string) error {
+	return c.request(ctx, http.MethodDelete,
+		path.Join(organizationAPIPath, url.PathEscape(organizationID)), nil, nil, http.StatusNoContent)
+}
+
 func (c *HTTPClient) LinkOrganization(ctx context.Context, serviceDeskID, organizationID string) error {
 	return c.request(ctx, http.MethodPost,
-		path.Join("/rest/servicedeskapi/servicedesk", url.PathEscape(serviceDeskID), "organization"),
+		path.Join(serviceDeskAPIPath, url.PathEscape(serviceDeskID), "organization"),
 		map[string]string{"organizationId": organizationID}, nil, http.StatusNoContent, http.StatusOK)
 }
 
 func (c *HTTPClient) ListOrganizationUsers(ctx context.Context, organizationID string) ([]Customer, error) {
 	var customers []Customer
-	base := path.Join("/rest/servicedeskapi/organization", url.PathEscape(organizationID), "user")
-	nextURL := c.endpoint(base) + "?start=0&limit=50"
+	base := path.Join(organizationAPIPath, url.PathEscape(organizationID), "user")
+	nextURL := c.endpoint(base) + initialPageQuery
 	for nextURL != "" {
 		var page userPage
 		if err := c.requestURL(ctx, http.MethodGet, nextURL, nil, &page, http.StatusOK); err != nil {
@@ -140,10 +167,60 @@ func (c *HTTPClient) ListOrganizationUsers(ctx context.Context, organizationID s
 			if limit <= 0 {
 				limit = 50
 			}
-			nextURL = c.endpoint(base) + "?start=" + strconv.Itoa(page.Start+limit) + "&limit=" + strconv.Itoa(limit)
+			nextURL = c.endpoint(base) + pageStartQuery + strconv.Itoa(page.Start+limit) + pageLimitQuery + strconv.Itoa(limit)
 		}
 	}
 	return customers, nil
+}
+
+func (c *HTTPClient) ListServiceDeskCustomers(ctx context.Context, serviceDeskID string) ([]Customer, error) {
+	base := path.Join(serviceDeskAPIPath, url.PathEscape(serviceDeskID), "customer")
+	nextURL := c.endpoint(base) + initialPageQuery
+	var customers []Customer
+	for nextURL != "" {
+		var page userPage
+		if err := c.requestURL(ctx, http.MethodGet, nextURL, nil, &page, http.StatusOK); err != nil {
+			return nil, err
+		}
+		for _, user := range page.Values {
+			customers = append(customers, Customer{
+				AccountID: user.AccountID, Email: user.EmailAddress, DisplayName: user.DisplayName,
+			})
+		}
+		nextURL = page.Links.Next
+		if nextURL == "" && !page.IsLastPage {
+			limit := page.Limit
+			if limit <= 0 {
+				limit = 50
+			}
+			nextURL = c.endpoint(base) + pageStartQuery + strconv.Itoa(page.Start+limit) + pageLimitQuery + strconv.Itoa(limit)
+		}
+	}
+	return customers, nil
+}
+
+func (c *HTTPClient) ListUserOrganizations(ctx context.Context, accountID string) ([]Organization, error) {
+	base := organizationAPIPath
+	nextURL := c.endpoint(base) + "?accountId=" + url.QueryEscape(accountID) + "&start=0&limit=50"
+	var organizations []Organization
+	for nextURL != "" {
+		var page organizationPage
+		if err := c.requestURL(ctx, http.MethodGet, nextURL, nil, &page, http.StatusOK); err != nil {
+			return nil, err
+		}
+		for _, organization := range page.Values {
+			organizations = append(organizations, Organization(organization))
+		}
+		nextURL = page.Links.Next
+		if nextURL == "" && !page.IsLastPage {
+			limit := page.Limit
+			if limit <= 0 {
+				limit = 50
+			}
+			nextURL = c.endpoint(base) + "?accountId=" + url.QueryEscape(accountID) + "&start=" + strconv.Itoa(page.Start+limit) + pageLimitQuery + strconv.Itoa(limit)
+		}
+	}
+	return organizations, nil
 }
 
 func (c *HTTPClient) EnsureCustomer(ctx context.Context, serviceDeskID string, user model.CustomerUser) (Customer, bool, error) {
@@ -200,9 +277,30 @@ func (c *HTTPClient) EnsureCustomer(ctx context.Context, serviceDeskID string, u
 
 func (c *HTTPClient) AddUserToOrganization(ctx context.Context, organizationID, accountID string) error {
 	return c.request(ctx, http.MethodPost,
-		path.Join("/rest/servicedeskapi/organization", url.PathEscape(organizationID), "user"),
+		path.Join(organizationAPIPath, url.PathEscape(organizationID), "user"),
 		map[string]any{"accountIds": []string{accountID}, "usernames": []string{}}, nil,
 		http.StatusNoContent, http.StatusOK)
+}
+
+func (c *HTTPClient) RemoveUserFromOrganization(ctx context.Context, organizationID, accountID string) error {
+	return c.request(ctx, http.MethodDelete,
+		path.Join(organizationAPIPath, url.PathEscape(organizationID), "user"),
+		map[string]any{"accountIds": []string{accountID}, "usernames": []string{}}, nil,
+		http.StatusNoContent, http.StatusOK)
+}
+
+func (c *HTTPClient) RemoveCustomerFromServiceDesk(ctx context.Context, serviceDeskID, accountID string) error {
+	err := c.request(ctx, http.MethodDelete,
+		path.Join(serviceDeskAPIPath, url.PathEscape(serviceDeskID), "customer"),
+		map[string]any{"accountIds": []string{accountID}, "usernames": []string{}}, nil,
+		http.StatusNoContent, http.StatusOK)
+	if err == nil {
+		return nil
+	}
+	if isServiceDeskOpenAccessError(err) {
+		return fmt.Errorf("%w: %w", ErrServiceDeskOpenAccessEnabled, err)
+	}
+	return err
 }
 
 type organizationDTO struct {
@@ -243,8 +341,8 @@ type jiraUserDTO struct {
 }
 
 func (c *HTTPClient) findOrganization(ctx context.Context, name string) (Organization, bool, error) {
-	base := "/rest/servicedeskapi/organization"
-	nextURL := c.endpoint(base) + "?start=0&limit=50"
+	base := organizationAPIPath
+	nextURL := c.endpoint(base) + initialPageQuery
 	for nextURL != "" {
 		var page organizationPage
 		if err := c.requestURL(ctx, http.MethodGet, nextURL, nil, &page, http.StatusOK); err != nil {
@@ -261,35 +359,55 @@ func (c *HTTPClient) findOrganization(ctx context.Context, name string) (Organiz
 			if limit <= 0 {
 				limit = 50
 			}
-			nextURL = c.endpoint(base) + "?start=" + strconv.Itoa(page.Start+limit) + "&limit=" + strconv.Itoa(limit)
+			nextURL = c.endpoint(base) + pageStartQuery + strconv.Itoa(page.Start+limit) + pageLimitQuery + strconv.Itoa(limit)
 		}
 	}
 	return Organization{}, false, nil
 }
 
 func (c *HTTPClient) findCustomer(ctx context.Context, serviceDeskID, email string) (Customer, bool, error) {
-	base := path.Join("/rest/servicedeskapi/servicedesk", url.PathEscape(serviceDeskID), "customer")
+	base := path.Join(serviceDeskAPIPath, url.PathEscape(serviceDeskID), "customer")
 	nextURL := c.endpoint(base) + "?query=" + url.QueryEscape(email) + "&start=0&limit=50"
+	var candidates []Customer
 	for nextURL != "" {
 		var page userPage
 		if err := c.requestURL(ctx, http.MethodGet, nextURL, nil, &page, http.StatusOK); err != nil {
 			return Customer{}, false, err
 		}
-		for _, candidate := range page.Values {
-			if normalized, ok := filter.NormalizeEmail(candidate.EmailAddress); ok && normalized == email {
-				return Customer{AccountID: candidate.AccountID, Email: candidate.EmailAddress, DisplayName: candidate.DisplayName}, true, nil
-			}
+		customer, exact, pageCandidates := customerCandidates(page.Values, email)
+		if exact {
+			return customer, true, nil
 		}
+		candidates = append(candidates, pageCandidates...)
 		nextURL = page.Links.Next
 		if nextURL == "" && !page.IsLastPage {
 			limit := page.Limit
 			if limit <= 0 {
 				limit = 50
 			}
-			nextURL = c.endpoint(base) + "?query=" + url.QueryEscape(email) + "&start=" + strconv.Itoa(page.Start+limit) + "&limit=" + strconv.Itoa(limit)
+			nextURL = c.endpoint(base) + "?query=" + url.QueryEscape(email) + "&start=" + strconv.Itoa(page.Start+limit) + pageLimitQuery + strconv.Itoa(limit)
 		}
 	}
+	if len(candidates) == 1 && candidates[0].Email == "" {
+		candidates[0].Email = email
+		return candidates[0], true, nil
+	}
 	return Customer{}, false, nil
+}
+
+func customerCandidates(values []userDTO, email string) (Customer, bool, []Customer) {
+	var candidates []Customer
+	for _, candidate := range values {
+		customer := Customer{AccountID: candidate.AccountID, Email: candidate.EmailAddress, DisplayName: candidate.DisplayName}
+		normalized, ok := filter.NormalizeEmail(candidate.EmailAddress)
+		if ok && normalized == email {
+			return customer, true, nil
+		}
+		if customer.AccountID != "" {
+			candidates = append(candidates, customer)
+		}
+	}
+	return Customer{}, false, candidates
 }
 
 func (c *HTTPClient) findJiraUser(ctx context.Context, email string) (Customer, bool, error) {
@@ -362,6 +480,7 @@ func (c *HTTPClient) requestURL(ctx context.Context, method, requestURL string, 
 			Method:     method,
 			Path:       requestURI.Path,
 			Details:    jiraErrorDetails(body),
+			I18nKey:    jiraErrorI18nKey(body),
 		}
 	}
 	if result == nil {
@@ -378,6 +497,7 @@ type APIError struct {
 	Method     string
 	Path       string
 	Details    string
+	I18nKey    string
 }
 
 func (e *APIError) Error() string {
@@ -397,6 +517,23 @@ func jiraErrorDetails(body []byte) string {
 		details = details[:2048] + "..."
 	}
 	return details
+}
+
+func jiraErrorI18nKey(body []byte) string {
+	var response struct {
+		I18nErrorMessage struct {
+			I18nKey string `json:"i18nKey"`
+		} `json:"i18nErrorMessage"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return ""
+	}
+	return response.I18nErrorMessage.I18nKey
+}
+
+func isServiceDeskOpenAccessError(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && strings.HasPrefix(apiErr.I18nKey, openAccessI18nPrefix)
 }
 
 func (c *HTTPClient) endpoint(requestPath string) string {

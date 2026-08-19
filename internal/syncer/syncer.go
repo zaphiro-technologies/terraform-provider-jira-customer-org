@@ -60,6 +60,26 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (Result, error) {
 	return result, nil
 }
 
+func Cleanup(ctx context.Context, cfg Config, logger *slog.Logger) error {
+	if logger == nil {
+		logger = newLogger()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+
+	if err := (jiraSyncer{
+		baseURL: cfg.BaseURL,
+		logger:  logger,
+		options: reconcile.Options{
+			OrganizationName: cfg.OrganizationName,
+			ServiceDeskID:    cfg.ServiceDeskID,
+		},
+	}).Delete(ctx); err != nil {
+		return fmt.Errorf("jira organization cleanup failed: %w", err)
+	}
+	return nil
+}
+
 type jiraSyncer struct {
 	baseURL string
 	logger  *slog.Logger
@@ -72,6 +92,14 @@ func (s jiraSyncer) Sync(ctx context.Context, users []model.CustomerUser) (recon
 		return reconcile.Summary{}, fmt.Errorf("configure Jira client: %w", err)
 	}
 	return reconcile.New(jiraClient, s.logger, s.options).Sync(ctx, users)
+}
+
+func (s jiraSyncer) Delete(ctx context.Context) error {
+	jiraClient, err := jira.NewClientFromEnvWithBaseURL(http.DefaultClient, s.baseURL)
+	if err != nil {
+		return fmt.Errorf("configure Jira client: %w", err)
+	}
+	return reconcile.New(jiraClient, s.logger, s.options).Delete(ctx)
 }
 
 func newLogger() *slog.Logger {
@@ -92,6 +120,7 @@ func logSummary(logger *slog.Logger, result Result) {
 		"customers_existing", summary.CustomersExisting,
 		"customers_created", summary.CustomersCreated,
 		"memberships_added", summary.MembershipsAdded,
-		"memberships_removed", 0,
+		"memberships_removed", summary.MembershipsRemoved,
+		"customers_removed", summary.CustomersRemoved,
 	)
 }
