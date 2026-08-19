@@ -9,9 +9,8 @@ description: |-
 # Jira Customer Organization Provider
 
 This provider manages additive or authoritative membership reconciliation for
-Jira Service Management customer organizations. It does not discover users
-from an identity provider; callers provide normalized email and display-name
-values.
+Jira Service Management customer organizations. It does not discover users from
+an identity provider; callers provide normalized email and display-name values.
 
 ## Authentication
 

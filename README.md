@@ -17,10 +17,10 @@ For each reconciliation, the provider:
 3. Reuses existing Jira customers and Jira accounts where possible.
 4. Creates missing customers and adds them to the organization.
 5. In `authoritative` mode, removes organization members that are not in the
-  supplied user list.
+   supplied user list.
 6. In `authoritative` mode, scans all service-desk customers after membership
-  reconciliation and removes customers that no longer belong to any
-  organization.
+   reconciliation and removes customers that no longer belong to any
+   organization.
 
 In `additive` mode, existing organization members are left untouched. The
 `membership_mode` argument controls which behavior is used.
@@ -29,8 +29,8 @@ In `additive` mode, existing organization members are left untouched. The
 organization membership. A customer that still belongs to another Jira
 organization is retained.
 
-Jira service-desk open access must be disabled for authoritative orphan
-customer cleanup. Jira rejects customer deletion while open access is enabled.
+Jira service-desk open access must be disabled for authoritative orphan customer
+cleanup. Jira rejects customer deletion while open access is enabled.
 
 The resource is safe to run repeatedly. The input user list is write-only and is
 not stored in Terraform state.
@@ -85,9 +85,9 @@ resource "jira_customer_organization_sync" "this" {
 directory data changes and Terraform must execute the resource again. Do not use
 a timestamp or another value that changes on every refresh.
 
-Set `membership_mode = "additive"` to preserve existing organization members,
-or `membership_mode = "authoritative"` to make the organization match
-`users_wo` and clean up orphaned customers.
+Set `membership_mode = "additive"` to preserve existing organization members, or
+`membership_mode = "authoritative"` to make the organization match `users_wo`
+and clean up orphaned customers.
 
 ## Crossplane
 
