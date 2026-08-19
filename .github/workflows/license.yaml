@@ -1,0 +1,16 @@
+name: License
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  license:
+    uses: zaphiro-technologies/github-workflows/.github/workflows/license.yaml@main
+    secrets: inherit
