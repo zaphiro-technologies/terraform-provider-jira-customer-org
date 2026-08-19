@@ -14,5 +14,3 @@ jobs:
   license:
     uses: zaphiro-technologies/github-workflows/.github/workflows/license.yaml@main
     secrets: inherit
-    with:
-      repositories: cim-go, golib, logging, observability, protobuf
