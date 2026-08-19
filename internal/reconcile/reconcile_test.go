@@ -31,10 +31,20 @@ type fakeClient struct {
 	removedCustomers     []string
 	removeCustomerError  error
 	addError             error
+	organizationDeleted  bool
 }
 
 func (f *fakeClient) EnsureOrganization(context.Context, string) (jira.Organization, bool, error) {
 	return f.organization, f.organizationExists, nil
+}
+
+func (f *fakeClient) FindOrganization(context.Context, string) (jira.Organization, bool, error) {
+	return f.organization, f.organizationExists, nil
+}
+
+func (f *fakeClient) DeleteOrganization(context.Context, string) error {
+	f.organizationDeleted = true
+	return nil
 }
 
 func (f *fakeClient) LinkOrganization(context.Context, string, string) error { return nil }
@@ -252,5 +262,53 @@ func TestSyncReturnsErrorAfterPartialJiraFailure(t *testing.T) {
 	}
 	if summary.CustomersCreated != 1 || summary.MembershipsAdded != 0 {
 		t.Fatalf("unexpected summary: %#v", summary)
+	}
+}
+
+func TestDeleteCleansUpOrganizationMembersAndCustomers(t *testing.T) {
+	client := &fakeClient{
+		organization:       jira.Organization{ID: "1", Name: "Acme"},
+		organizationExists: true,
+		organizationUsers: []jira.Customer{
+			{AccountID: "account-owned", Email: "owned@example.com"},
+			{AccountID: "account-shared", Email: "shared@example.com"},
+		},
+		userOrganizations: map[string][]jira.Organization{
+			"account-owned":  {{ID: "1", Name: "Acme"}},
+			"account-shared": {{ID: "1", Name: "Acme"}, {ID: "other", Name: "Other"}},
+		},
+	}
+
+	if err := testReconciler(client).Delete(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !client.organizationDeleted {
+		t.Fatal("organization was not deleted")
+	}
+	if len(client.removed) != 2 || client.removed[0].accountID != "account-owned" || client.removed[1].accountID != "account-shared" {
+		t.Fatalf("removed memberships = %#v", client.removed)
+	}
+	if len(client.removedCustomers) != 1 || client.removedCustomers[0] != "account-owned" {
+		t.Fatalf("removed customers = %#v", client.removedCustomers)
+	}
+}
+
+func TestDeleteLeavesOrganizationWhenCustomerCleanupFails(t *testing.T) {
+	client := &fakeClient{
+		organization:        jira.Organization{ID: "1", Name: "Acme"},
+		organizationExists:  true,
+		organizationUsers:   []jira.Customer{{AccountID: "account-1", Email: "user@example.com"}},
+		removeCustomerError: errors.New("open access enabled"),
+		userOrganizations:   map[string][]jira.Organization{"account-1": {{ID: "1", Name: "Acme"}}},
+	}
+
+	if err := testReconciler(client).Delete(context.Background()); err == nil {
+		t.Fatal("expected cleanup failure")
+	}
+	if client.organizationDeleted {
+		t.Fatal("organization was deleted after cleanup failure")
+	}
+	if len(client.removed) != 0 {
+		t.Fatalf("removed memberships = %#v, want none", client.removed)
 	}
 }

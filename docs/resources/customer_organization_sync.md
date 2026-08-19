@@ -17,6 +17,12 @@ from the service desk.
 
 The `users_wo` argument is write-only and is not persisted in Terraform state.
 
+When this resource is destroyed, users belonging only to this organization are
+removed from the service desk, all users are removed from this organization's
+membership, and the organization is deleted. Users belonging to another Jira
+organization are retained. Jira service-desk open access must be disabled for
+the user cleanup to succeed.
+
 ## Example Usage
 
 ```hcl

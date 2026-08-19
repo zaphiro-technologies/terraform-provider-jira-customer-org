@@ -305,6 +305,25 @@ func TestHTTPClientRemovesOrganizationUser(t *testing.T) {
 	}
 }
 
+func TestHTTPClientDeletesOrganization(t *testing.T) {
+	server := newIPv4Server(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodDelete || request.URL.Path != "/rest/servicedeskapi/organization/org-1" {
+			http.NotFound(response, request)
+			return
+		}
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{BaseURL: server.URL, UserEmail: "admin@example.com", APIToken: "secret", HTTPClient: server.Client, allowInsecureForTest: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteOrganization(context.Background(), "org-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHTTPClientRemovesCustomerFromServiceDesk(t *testing.T) {
 	var gotBody map[string]any
 	server := newIPv4Server(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

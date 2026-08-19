@@ -107,6 +107,55 @@ func (r *Reconciler) Sync(ctx context.Context, users []model.CustomerUser) (Summ
 	return summary, nil
 }
 
+func (r *Reconciler) Delete(ctx context.Context) error {
+	organization, found, err := r.client.FindOrganization(ctx, r.options.OrganizationName)
+	if err != nil {
+		return fmt.Errorf("find Jira organization for deletion: %w", err)
+	}
+	if !found {
+		return nil
+	}
+
+	members, err := r.client.ListOrganizationUsers(ctx, organization.ID)
+	if err != nil {
+		return fmt.Errorf("list Jira organization members for deletion: %w", err)
+	}
+
+	var failures []string
+	for _, member := range members {
+		if err := r.cleanupOrganizationMember(ctx, organization.ID, member); err != nil {
+			failures = append(failures, err.Error())
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%d Jira organization cleanup operations failed: %s", len(failures), strings.Join(failures, "; "))
+	}
+	if err := r.client.DeleteOrganization(ctx, organization.ID); err != nil {
+		return fmt.Errorf("delete Jira organization: %w", err)
+	}
+	return nil
+}
+
+func (r *Reconciler) cleanupOrganizationMember(ctx context.Context, organizationID string, member jira.Customer) error {
+	if member.AccountID == "" {
+		return fmt.Errorf("clean up organization member %q: no account ID", member.Email)
+	}
+
+	organizations, err := r.client.ListUserOrganizations(ctx, member.AccountID)
+	if err != nil {
+		return fmt.Errorf("list organizations for customer %q: %v", member.AccountID, err)
+	}
+	if !hasOtherOrganization(organizations, organizationID) {
+		if err := r.client.RemoveCustomerFromServiceDesk(ctx, r.options.ServiceDeskID, member.AccountID); err != nil {
+			return fmt.Errorf("remove customer %q from service desk: %v", member.AccountID, err)
+		}
+	}
+	if err := r.client.RemoveUserFromOrganization(ctx, organizationID, member.AccountID); err != nil {
+		return fmt.Errorf("remove customer %q from organization: %v", member.AccountID, err)
+	}
+	return nil
+}
+
 func newMembershipState(members []jira.Customer, users []model.CustomerUser) membershipState {
 	state := membershipState{
 		memberEmails:      make(map[string]struct{}, len(members)),

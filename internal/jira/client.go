@@ -31,7 +31,9 @@ const (
 var ErrServiceDeskOpenAccessEnabled = errors.New("service desk has open access enabled")
 
 type Client interface {
+	FindOrganization(ctx context.Context, name string) (Organization, bool, error)
 	EnsureOrganization(ctx context.Context, name string) (Organization, bool, error)
+	DeleteOrganization(ctx context.Context, organizationID string) error
 	LinkOrganization(ctx context.Context, serviceDeskID, organizationID string) error
 	ListOrganizationUsers(ctx context.Context, organizationID string) ([]Customer, error)
 	ListServiceDeskCustomers(ctx context.Context, serviceDeskID string) ([]Customer, error)
@@ -105,7 +107,7 @@ func NewClientFromEnvWithBaseURL(httpClient *http.Client, baseURL string) (*HTTP
 }
 
 func (c *HTTPClient) EnsureOrganization(ctx context.Context, name string) (Organization, bool, error) {
-	organization, found, err := c.findOrganization(ctx, name)
+	organization, found, err := c.FindOrganization(ctx, name)
 	if err != nil {
 		return Organization{}, false, err
 	}
@@ -117,7 +119,7 @@ func (c *HTTPClient) EnsureOrganization(ctx context.Context, name string) (Organ
 	err = c.request(ctx, http.MethodPost, organizationAPIPath, map[string]string{"name": name}, &response, http.StatusCreated)
 	if err != nil {
 		if apiErr, ok := err.(*APIError); ok && apiErr.StatusCode == http.StatusConflict {
-			organization, found, findErr := c.findOrganization(ctx, name)
+			organization, found, findErr := c.FindOrganization(ctx, name)
 			if findErr == nil && found {
 				return organization, true, nil
 			}
@@ -128,6 +130,15 @@ func (c *HTTPClient) EnsureOrganization(ctx context.Context, name string) (Organ
 		return Organization{}, false, fmt.Errorf("jira organization create response did not contain an ID")
 	}
 	return Organization(response), false, nil
+}
+
+func (c *HTTPClient) FindOrganization(ctx context.Context, name string) (Organization, bool, error) {
+	return c.findOrganization(ctx, name)
+}
+
+func (c *HTTPClient) DeleteOrganization(ctx context.Context, organizationID string) error {
+	return c.request(ctx, http.MethodDelete,
+		path.Join(organizationAPIPath, url.PathEscape(organizationID)), nil, nil, http.StatusNoContent)
 }
 
 func (c *HTTPClient) LinkOrganization(ctx context.Context, serviceDeskID, organizationID string) error {

@@ -35,6 +35,11 @@ customer cleanup. Jira rejects customer deletion while open access is enabled.
 The resource is safe to run repeatedly. The input user list is write-only and is
 not stored in Terraform state.
 
+When the resource is destroyed, it removes the organization's users from the
+service desk when they do not belong to another organization, removes the
+organization memberships, and deletes the Jira organization. Destruction is
+destructive and requires Jira service-desk open access to be disabled.
+
 ## Provider configuration
 
 The provider has no Terraform configuration arguments. Jira credentials are read

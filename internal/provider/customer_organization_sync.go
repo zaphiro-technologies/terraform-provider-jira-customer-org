@@ -21,13 +21,15 @@ var _ resource.Resource = (*CustomerOrganizationSyncResource)(nil)
 var _ resource.ResourceWithConfigValidators = (*CustomerOrganizationSyncResource)(nil)
 
 type CustomerOrganizationSyncResource struct {
-	run    func(context.Context, syncer.Config, *slog.Logger) (syncer.Result, error)
-	logger *slog.Logger
+	run     func(context.Context, syncer.Config, *slog.Logger) (syncer.Result, error)
+	cleanup func(context.Context, syncer.Config, *slog.Logger) error
+	logger  *slog.Logger
 }
 
 func NewCustomerOrganizationSyncResource() resource.Resource {
 	return &CustomerOrganizationSyncResource{
-		run: syncer.Run,
+		run:     syncer.Run,
+		cleanup: syncer.Cleanup,
 	}
 }
 
@@ -154,15 +156,35 @@ func (r *CustomerOrganizationSyncResource) Update(ctx context.Context, request r
 	response.Diagnostics.Append(response.State.Set(ctx, &data)...)
 }
 
-func (r *CustomerOrganizationSyncResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {
-	// Terraform removes this execution resource from state; Jira membership is
-	// changed only by a reconciliation run.
+func (r *CustomerOrganizationSyncResource) Delete(ctx context.Context, request resource.DeleteRequest, response *resource.DeleteResponse) {
+	var data syncResourceModel
+	response.Diagnostics.Append(request.State.Get(ctx, &data)...)
+	if response.Diagnostics.HasError() {
+		return
+	}
+
+	cfg := syncer.Config{
+		OrganizationName: data.OrganizationName.ValueString(),
+		ServiceDeskID:    data.ServiceDeskID.ValueString(),
+		BaseURL:          data.BaseURL.ValueString(),
+	}
+	if err := r.cleaner()(ctx, cfg); err != nil {
+		response.Diagnostics.AddError("Jira organization cleanup failed", err.Error())
+	}
 }
 
 func (r *CustomerOrganizationSyncResource) runner() func(context.Context, syncer.Config) (syncer.Result, error) {
 	logger := r.logger
 	return func(ctx context.Context, cfg syncer.Config) (syncer.Result, error) {
 		return r.run(ctx, cfg, logger)
+	}
+}
+
+func (r *CustomerOrganizationSyncResource) cleaner() func(context.Context, syncer.Config) error {
+	cleanup := r.cleanup
+	logger := r.logger
+	return func(ctx context.Context, cfg syncer.Config) error {
+		return cleanup(ctx, cfg, logger)
 	}
 }
 
